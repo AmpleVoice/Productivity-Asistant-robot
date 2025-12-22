@@ -1,8 +1,8 @@
 # sensors.py
-from mq9 import MQ9Sensor
-from ultrasonic import UltrasonicArray
-from gps import GPSModule
-from dht11 import DHT11Sensor
+from sensors.mq9 import MQ9Sensor
+from sensors.ultrasonic import UltrasonicArray
+from sensors.gps import GPSModule
+from sensors.dht11 import DHT11Sensor
 from config.settings import *
 import board
 

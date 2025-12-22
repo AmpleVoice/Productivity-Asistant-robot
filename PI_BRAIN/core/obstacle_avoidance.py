@@ -1,5 +1,5 @@
 import time
-import actions
+from core import actions
 
 OBSTACLE_DISTANCE = 25  # cm
 
