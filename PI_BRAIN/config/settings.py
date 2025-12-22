@@ -1,12 +1,20 @@
-# config/settings.py
+# configurations
 
 # --- Ultrasonic ---
 ULTRASONIC_INTERVAL = 0.1
 SAFE_DISTANCE_CM = 30
+LEFT_ULTRASONIC_SENSOR_TRIG_PIN = None
+LEFT_ULTRASONIC_SENSOR_ECHO_PIN = None
+RIGHT_ULTRASONIC_SENSOR_TRIG_PIN = None
+RIGHT_ULTRASONIC_SENSOR_ECHO_PIN = None
 
 # --- Gas ---
 MQ9_INTERVAL = 5
 GAS_THRESHOLD = 300
+MQ9_SENSOR_PIN = None
+
+# --- GPS ---
+GPS_MODULE_PORT = None
 
 # --- Scheduler ---
 SCHEDULER_INTERVAL = 60  # every minute
