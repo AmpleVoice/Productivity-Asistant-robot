@@ -1,0 +1,12 @@
+{
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+    "python-envs.pythonProjects": [],
+    "cSpell.words": [
+        "frontalface",
+        "haarcascade",
+        "imshow",
+        "landmarker",
+        "Landmarker",
+        "SRGB"
+    ]
+}
