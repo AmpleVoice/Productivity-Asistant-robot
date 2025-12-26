@@ -2,11 +2,12 @@ import threading
 from audio.audio_receiver import AudioReceiver
 
 class AudioManager:
-    def __init__(self, decision_engine):
+    def __init__(self, decision_engine=None):
         self.audio = AudioReceiver()
         self.engine = decision_engine
         self.running = False
         self.thread = None
+
 
     def run(self):
         self.running = True
@@ -17,7 +18,10 @@ class AudioManager:
                     continue
                 command = self.audio.listen_for_command()
                 if command:
-                    self.engine.handle_voice(command)
+                    if self.engine:
+                        self.engine.handle_voice(command)
+                    else:
+                        print("[AudioManager] Received command but decision engine not set")
             except KeyboardInterrupt:
                 self.running = False
             except Exception as e:

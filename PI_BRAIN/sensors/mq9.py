@@ -6,7 +6,12 @@ import threading
 class MQ9Sensor:
     def __init__(self, pin):
         self.pin = pin
-        self.latest_data = None
+        # Default: safe (not dangerous) but no CO ppm reading
+        self.latest_data = {
+            "mq9": {"dangerous_CO": False},
+            "timestamp": round(time.time(), 2),
+            "valid": True
+        }
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
 

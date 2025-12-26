@@ -9,7 +9,12 @@ class UltrasonicArray:
     def __init__(self, sensors: dict, settle_time: float = 0.05):
         self.sensors = sensors
         self.settle_time = settle_time
-        self.latest_data = None
+        # Initialize with a safe default so non-Pi dev runs have values
+        self.latest_data = {
+            "ultrasonic": {name: 100 for name in self.sensors.keys()},
+            "timestamp": round(time.time(), 2),
+            "valid": True
+        }
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
@@ -52,8 +57,12 @@ class UltrasonicArray:
                 dist = self._measure_distance(pins["trig"], pins["echo"])
                 time.sleep(self.settle_time)
                 if dist is None:
+                    # Keep previous reading if available, otherwise use a safe default
+                    prev = self.latest_data.get("ultrasonic", {}).get(name, 100)
+                    data[name] = prev
                     valid = False
-                data[name] = dist
+                else:
+                    data[name] = dist
 
             self.latest_data = {
                 "ultrasonic": data,
