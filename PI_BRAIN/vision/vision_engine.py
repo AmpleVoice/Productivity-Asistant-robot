@@ -125,7 +125,7 @@ class VisionEngine(threading.Thread):
 
         # ---- 3. Optional debug window ----
         if DEBUG_VIEW:
-            cv2.imshow("VisionEngine", small_frame)
+            # cv2.imshow("VisionEngine", small_frame)
             if cv2.waitKey(1) & 0xFF == 27:
                 self.stop()
 
