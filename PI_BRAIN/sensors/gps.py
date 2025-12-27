@@ -5,15 +5,7 @@ import time
 class GPSModule:
     def __init__(self, port, baudrate=9600):
         self.serial = serial.Serial(port, baudrate, timeout=1)
-        # Default to a plausible coordinate so dev runs have values
-        self.latest_data = {
-            "gps": {
-                "latitude": 0.0,
-                "longitude": 0.0
-            },
-            "timestamp": round(time.time(), 2),
-            "valid": False
-        }
+        self.latest_data = None
 
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
