@@ -1,7 +1,17 @@
-#!/usr/bin/env python3
 """
-Robot Startup Script
-Comprehensive hardware validation and system initialization.
+startup.py - System orchestration and hardware validation.
+
+Responsibilities:
+- Initialize hardware backends (GPIO, serial, I2C)
+- Validate all hardware components
+- Start subsystems in correct order
+- Run main control loop
+- Clean shutdown
+
+NOT responsible for:
+- Direct GPIO pin manipulation (uses sensor interface)
+- Behavior-level actions (uses test helpers only)
+- Guessing sensor schemas (trusts stable schema)
 """
 
 import sys
@@ -16,7 +26,7 @@ if project_root not in sys.path:
 
 from config import settings
 from core.states import RobotState
-from sensors.sensor import RobotSensors as SensorInterface  # use RobotSensors directly (deprecated core.sensor_interface)
+from sensors.sensor import RobotSensors
 from core.decision_engine import DecisionEngine
 from core import actions
 from vision.vision_engine import VisionEngine
@@ -36,7 +46,7 @@ class HardwareValidator:
             "dht11": False,
             "mq9": False,
             "gps": False,
-            "orientation": False  # Not flipped
+            "orientation": False
         }
         self.critical_failed = []
         self.optional_failed = []
@@ -44,6 +54,9 @@ class HardwareValidator:
     def validate_all(self, sensors):
         """
         Run complete hardware validation.
+        
+        Args:
+            sensors: RobotSensors instance with stable schema
         
         Returns:
             bool: True if all CRITICAL components pass
@@ -56,7 +69,7 @@ class HardwareValidator:
         critical = ["camera", "microphone", "speaker", "ultrasonic", "orientation"]
         
         # Run all checks
-        self._check_orientation()
+        self._check_orientation(sensors)
         self._check_camera()
         self._check_microphone()
         self._check_speaker()
@@ -97,49 +110,25 @@ class HardwareValidator:
         
         return True
     
-    def _check_orientation(self):
-        """Check if robot is upside down."""
+    def _check_orientation(self, sensors):
+        """
+        Check if robot is upside down using sensor interface.
+        
+        This uses the stable sensor schema - NO direct GPIO access.
+        """
         print("\n[1/9] Checking orientation...")
-        FLIP_SENSOR_PIN = getattr(settings, 'FLIP_SENSOR_PIN', None)
-
+        
         try:
-            # Try to import real GPIO; fall back to dev_mocks.gpio if available
-            try:
-                import RPi.GPIO as GPIO
-                gpio_available = True
-            except Exception:
-                GPIO = None
-                gpio_available = False
-
-            if not gpio_available:
-                dm = sys.modules.get('dev_mocks')
-                if dm and getattr(dm, 'gpio', None):
-                    GPIO = dm.gpio
-                    # If no pin configured in settings, use special placeholder that the mock understands
-                    if FLIP_SENSOR_PIN is None:
-                        FLIP_SENSOR_PIN = 'FLIP_SENSOR_PIN'
-                    print("  ⚠ Running orientation check with GPIO mocks (dev_mocks)")
-                else:
-                    print("  ⚠ No GPIO module available; skipping orientation check (assuming correct orientation)")
-                    self.results["orientation"] = True
-                    return
-
-            # Configure and read the flip sensor
-            try:
-                GPIO.setmode(GPIO.BCM)
-            except Exception:
-                pass
-
-            try:
-                # Some GPIO implementations may not accept keyword args; be permissive
-                GPIO.setup(FLIP_SENSOR_PIN, GPIO.IN, pull_up_down=getattr(GPIO, 'PUD_DOWN', None))
-            except TypeError:
-                GPIO.setup(FLIP_SENSOR_PIN, GPIO.IN)
-            except Exception:
-                pass
-
-            is_flipped = GPIO.input(FLIP_SENSOR_PIN)
-
+            sensor_data = sensors.read()
+            orientation = sensor_data.get("orientation", {})
+            
+            if not orientation.get("available"):
+                print("  ⚠ Orientation sensor not available (assuming correct)")
+                self.results["orientation"] = True
+                return
+            
+            is_flipped = orientation.get("flipped", False)
+            
             if is_flipped:
                 print("  ✗ Robot is UPSIDE DOWN!")
                 print("  → Please flip the robot right-side up")
@@ -147,7 +136,7 @@ class HardwareValidator:
             else:
                 print("  ✓ Orientation correct")
                 self.results["orientation"] = True
-
+                
         except Exception as e:
             print(f"  ✗ Orientation check failed: {e}")
             self.results["orientation"] = False
@@ -207,11 +196,11 @@ class HardwareValidator:
             self.results["microphone"] = False
     
     def _check_speaker(self):
-        """Check speaker functionality."""
+        """Check speaker functionality using test helper."""
         print("\n[4/9] Checking speaker...")
         try:
-            # Try to play a short test beep
-            actions.play_sound("beep")  # Assuming you have this function
+            # Use minimal test helper - NOT behavior-level action
+            actions.hardware_test_beep()
             time.sleep(0.2)
             
             print("  ✓ Speaker working (test beep played)")
@@ -222,12 +211,11 @@ class HardwareValidator:
             self.results["speaker"] = False
     
     def _check_lcd(self):
-        """Check LCD screen functionality."""
+        """Check LCD screen functionality using test helper."""
         print("\n[5/9] Checking LCD screen...")
         try:
-            actions.lcd_display("TEST", line=0)  # Assuming you have this function
-            time.sleep(0.5)
-            actions.lcd_clear()
+            # Use minimal test helper - NOT behavior-level action
+            actions.hardware_test_lcd()
             
             print("  ✓ LCD screen working")
             self.results["lcd"] = True
@@ -237,7 +225,11 @@ class HardwareValidator:
             self.results["lcd"] = False
     
     def _check_sensors(self, sensors):
-        """Check all sensor modules."""
+        """
+        Check all sensor modules using stable schema.
+        
+        This trusts the sensor interface - NO schema guessing.
+        """
         if not sensors:
             print("\n[6-9/9] ✗ Sensor interface not available")
             self.results["ultrasonic"] = False
@@ -247,17 +239,18 @@ class HardwareValidator:
             return
         
         try:
+            # Read using STABLE schema
             sensor_data = sensors.read()
             
             # Check Ultrasonic sensors
             print("\n[6/9] Checking ultrasonic sensors...")
-            ultrasonic = sensor_data.get("ultrasonic", {}).get("ultrasonic", {})
+            ultrasonic = sensor_data.get("ultrasonic", {})
             left = ultrasonic.get("left")
             right = ultrasonic.get("right")
             
             if left is not None and right is not None:
                 if 2 <= left <= 400 and 2 <= right <= 400:
-                    print(f"  ✓ Ultrasonic sensors working (L: {left}cm, R: {right}cm)")
+                    print(f"  ✓ Ultrasonic sensors working (L: {left:.1f}cm, R: {right:.1f}cm)")
                     self.results["ultrasonic"] = True
                 else:
                     print(f"  ⚠ Ultrasonic readings out of range (L: {left}, R: {right})")
@@ -268,13 +261,12 @@ class HardwareValidator:
             
             # Check DHT11 (temperature/humidity)
             print("\n[7/9] Checking DHT11 sensor...")
-            # Support multiple possible return shapes: direct 'dht11' or nested under 'environment'
-            dht = sensor_data.get("dht11", {}) or sensor_data.get("environment", {}).get("dht11", {}) or {}
-            temp = dht.get("temperature") or dht.get("temperature_c") or dht.get("temperature_celsius")
-            humidity = dht.get("humidity") or dht.get("humidity_pct") or dht.get("humidity_percent")
+            dht = sensor_data.get("dht11", {})
+            temp = dht.get("temperature_c")
+            humidity = dht.get("humidity")
             
             if temp is not None and humidity is not None:
-                print(f"  ✓ DHT11 working (Temp: {temp}°C, Humidity: {humidity}%)")
+                print(f"  ✓ DHT11 working (Temp: {temp:.1f}°C, Humidity: {humidity:.1f}%)")
                 self.results["dht11"] = True
             else:
                 print("  ⚠ DHT11 failed to read")
@@ -282,18 +274,13 @@ class HardwareValidator:
             
             # Check MQ9 (gas sensor)
             print("\n[8/9] Checking MQ9 gas sensor...")
-            # Support returns like {'mq9': {'dangerous_CO': True}} or nested under 'gas'
-            gas = sensor_data.get("gas", {}).get("mq9", {}) or sensor_data.get("mq9", {}) or {}
-            co_ppm = gas.get("co_ppm")
-            dangerous = gas.get("dangerous_CO", False)
+            mq9 = sensor_data.get("mq9", {})
+            co_ppm = mq9.get("co_ppm")
+            dangerous = mq9.get("dangerous", False)
             
-            if gas:
-                if co_ppm is not None:
-                    status = "⚠ DANGEROUS!" if dangerous else "✓ Safe"
-                    print(f"  ✓ MQ9 working (CO: {co_ppm} ppm) {status}")
-                else:
-                    status = "⚠ DANGEROUS!" if dangerous else "✓ Safe (CO unknown)"
-                    print(f"  ✓ MQ9 working ({status})")
+            if co_ppm is not None:
+                status = "⚠ DANGEROUS!" if dangerous else "✓ Safe"
+                print(f"  ✓ MQ9 working (CO: {co_ppm:.1f} ppm) {status}")
                 self.results["mq9"] = True
             else:
                 print("  ⚠ MQ9 failed to read")
@@ -301,12 +288,13 @@ class HardwareValidator:
             
             # Check GPS
             print("\n[9/9] Checking GPS module...")
-            gps = sensor_data.get("gps", {}).get("gps", {})
+            gps = sensor_data.get("gps", {})
             lat = gps.get("latitude")
             lon = gps.get("longitude")
+            has_fix = gps.get("fix", False)
             
-            if lat is not None and lon is not None:
-                print(f"  ✓ GPS working (Lat: {lat}, Lon: {lon})")
+            if has_fix and lat is not None and lon is not None:
+                print(f"  ✓ GPS working (Lat: {lat:.6f}, Lon: {lon:.6f})")
                 self.results["gps"] = True
             else:
                 print("  ⚠ GPS no fix (may need clear sky)")
@@ -314,6 +302,8 @@ class HardwareValidator:
                 
         except Exception as e:
             print(f"  ✗ Sensor check failed: {e}")
+            import traceback
+            traceback.print_exc()
             self.results["ultrasonic"] = False
             self.results["dht11"] = False
             self.results["mq9"] = False
@@ -327,7 +317,9 @@ class RobotSystem:
         self.sensors = None
         self.vision = None
         self.decision = None
+        self.audio = None
         self.running = False
+        self._shutdown_requested = False
         
     def initialize(self):
         """Initialize and validate all robot subsystems."""
@@ -335,21 +327,30 @@ class RobotSystem:
         print("🤖 ROBOT SYSTEM INITIALIZATION")
         print("=" * 60)
         
-        # Step 1: Initialize sensor interface
+        # Step 1: Initialize GPIO backend (single owner)
+        print("\n⚡ Initializing GPIO backend...")
+        try:
+            self._initialize_gpio()
+            print("✓ GPIO backend ready")
+        except Exception as e:
+            print(f"✗ GPIO initialization failed: {e}")
+            return False
+        
+        # Step 2: Initialize sensor interface
         print("\n📡 Initializing sensor interface...")
         try:
-            self.sensors = SensorInterface()
+            self.sensors = RobotSensors()
             print("✓ Sensor interface ready")
         except Exception as e:
             print(f"✗ Sensor interface failed: {e}")
             return False
         
-        # Step 2: Hardware validation
+        # Step 3: Hardware validation
         validator = HardwareValidator()
         if not validator.validate_all(self.sensors):
             return False
         
-        # Step 3: Initialize vision system
+        # Step 4: Initialize vision system
         print("\n" + "=" * 60)
         print("📷 Initializing vision system...")
         print("=" * 60)
@@ -366,10 +367,7 @@ class RobotSystem:
             print(f"✗ Vision initialization failed: {e}")
             return False
 
-        # Step 3b: Initialize audio manager (microphone listener) — start after decision engine is created
-        self.audio = None
-
-        # Step 4: Initialize decision engine
+        # Step 5: Initialize decision engine
         print("\n" + "=" * 60)
         print("🧠 Initializing decision engine...")
         print("=" * 60)
@@ -387,16 +385,21 @@ class RobotSystem:
             print(f"✗ Decision engine failed: {e}")
             return False
 
-        # Now start AudioManager (if available)
+        # Step 6: Initialize audio manager (last - depends on decision engine)
+        print("\n" + "=" * 60)
+        print("🎤 Initializing audio manager...")
+        print("=" * 60)
         try:
             from audio.audio_manager import AudioManager
             self.audio = AudioManager(self.decision)
             self.audio.start_async()
             print("✓ Audio manager started")
         except Exception as e:
-            print(f"✗ Audio manager failed to start: {e}")
-            self.audio = None        
-# Success
+            print(f"⚠ Audio manager failed to start: {e}")
+            print("  (Continuing without voice control)")
+            self.audio = None
+        
+        # Success
         print("\n" + "=" * 60)
         print("✅ ALL SYSTEMS READY")
         print("=" * 60)
@@ -405,11 +408,27 @@ class RobotSystem:
         self._display_sensor_summary(validator.results)
         
         return True
+    
+    def _initialize_gpio(self):
+        """
+        Initialize GPIO backend (single owner).
         
-        # Display sensor status summary
-        self._display_sensor_summary(validator.results)
-        
-        return True
+        This is the ONLY place where GPIO.setmode() is called.
+        All other modules receive configured GPIO objects.
+        """
+        try:
+            import RPi.GPIO as GPIO
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setwarnings(False)
+        except Exception:
+            # Fall back to mock GPIO if available
+            import sys
+            dm = sys.modules.get('dev_mocks')
+            if dm and getattr(dm, 'gpio', None):
+                GPIO = dm.gpio
+                print("  ⚠ Using mock GPIO (dev_mocks)")
+            else:
+                raise RuntimeError("No GPIO backend available")
     
     def _display_sensor_summary(self, results):
         """Display final sensor status summary."""
@@ -441,7 +460,7 @@ class RobotSystem:
         print("-" * 60 + "\n")
         
         try:
-            while self.running:
+            while self.running and not self._shutdown_requested:
                 # Main decision cycle
                 self.decision.update()
                 
@@ -459,53 +478,90 @@ class RobotSystem:
     
     def shutdown(self):
         """Clean shutdown of all systems."""
+        if self._shutdown_requested:
+            return  # Prevent double shutdown
+        
+        self._shutdown_requested = True
+        
         print("\n" + "=" * 60)
         print("🛑 SHUTTING DOWN SYSTEM")
         print("=" * 60)
         
         self.running = False
         
-        # Stop vision
-        if self.vision:
-            print("• Stopping vision system...")
-            self.vision.stop()
-            self.vision.join(timeout=2)
-
         # Stop audio manager
-        if getattr(self, 'audio', None):
+        if self.audio:
             print("• Stopping audio manager...")
             try:
                 self.audio.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"  ⚠ Audio shutdown error: {e}")
         
-        # Stop motors
+        # Stop vision
+        if self.vision:
+            print("• Stopping vision system...")
+            try:
+                self.vision.stop()
+                self.vision.join(timeout=2)
+            except Exception as e:
+                print(f"  ⚠ Vision shutdown error: {e}")
+        
+        # Stop motors (safe state)
         print("• Stopping motors...")
-        actions.stop_motors()
+        try:
+            actions.motors_stop()
+        except Exception as e:
+            print(f"  ⚠ Motor stop error: {e}")
         
         # Clear LCD
+        print("• Clearing LCD...")
         try:
             actions.lcd_clear()
-        except:
+        except Exception as e:
+            print(f"  ⚠ LCD clear error: {e}")
+        
+        # Cleanup sensors
+        if self.sensors:
+            print("• Cleaning up sensors...")
+            try:
+                self.sensors.cleanup()
+            except Exception as e:
+                print(f"  ⚠ Sensor cleanup error: {e}")
+        
+        # GPIO cleanup (we are the single owner)
+        print("• Cleaning up GPIO...")
+        try:
+            import RPi.GPIO as GPIO
+            GPIO.cleanup()
+        except Exception:
             pass
         
         print("\n✓ Shutdown complete")
         print("=" * 60)
 
 
+# Global robot instance for signal handler
+_robot_instance = None
+
+
 def signal_handler(sig, frame):
     """Handle Ctrl+C gracefully."""
-    # Avoid printing from signal handler to prevent reentrant I/O errors
+    global _robot_instance
+    if _robot_instance:
+        _robot_instance.shutdown()
     sys.exit(0)
 
 
 def main():
     """Main entry point."""
+    global _robot_instance
+    
     # Register signal handler
     signal.signal(signal.SIGINT, signal_handler)
     
     # Create robot system
     robot = RobotSystem()
+    _robot_instance = robot
     
     # Initialize with hardware validation
     if not robot.initialize():
